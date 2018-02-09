@@ -97,6 +97,9 @@ func Serve(j Jobs) {
 	// Cache the jobs list for later processing
 	cachedJobs = j
 
+	// Set unique id to all jobs
+	j.SetUniqueID()
+
 	// Get unix listener
 	lis, err := serverListenerUnix()
 	if err != nil {

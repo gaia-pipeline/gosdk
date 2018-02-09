@@ -1,6 +1,9 @@
 package golang
 
-import "github.com/gaia-pipeline/gaia/proto"
+import (
+	"github.com/gaia-pipeline/gaia/proto"
+	uuid "github.com/satori/go.uuid"
+)
 
 // Jobs new type for wrapper around proto.job
 type Jobs []JobsWrapper
@@ -23,4 +26,13 @@ func (j *Jobs) Get(uniqueid string) *JobsWrapper {
 	}
 
 	return nil
+}
+
+// SetUniqueID generates for every job a unique id.
+// This function should be called once on plugin start.
+// This is important for later execution.
+func (j *Jobs) SetUniqueID() {
+	for _, job := range *j {
+		job.Job.UniqueId = uuid.Must(uuid.NewV4()).String()
+	}
 }
