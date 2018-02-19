@@ -32,7 +32,7 @@ func (j *Jobs) Get(uniqueid string) *JobsWrapper {
 // This function should be called once on plugin start.
 // This is important for later execution.
 func (j *Jobs) SetUniqueID() {
-	for _, job := range *j {
-		job.Job.UniqueId = uuid.Must(uuid.NewV4()).String()
+	for id := range *j {
+		(*j)[id].Job.UniqueId = uuid.Must(uuid.NewV4()).String()
 	}
 }
