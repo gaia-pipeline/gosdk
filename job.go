@@ -1,8 +1,9 @@
 package golang
 
 import (
+	"hash/fnv"
+
 	"github.com/gaia-pipeline/gaia/proto"
-	uuid "github.com/satori/go.uuid"
 )
 
 // Jobs new type for wrapper around proto.job
@@ -18,9 +19,9 @@ type JobsWrapper struct {
 
 // Get looks up a job by the given id.
 // Returns the job otherwise nil.
-func (j *Jobs) Get(uniqueid string) *JobsWrapper {
+func (j *Jobs) Get(hash uint32) *JobsWrapper {
 	for _, job := range *j {
-		if job.Job.UniqueId == uniqueid {
+		if job.Job.UniqueId == hash {
 			return &job
 		}
 	}
@@ -28,11 +29,17 @@ func (j *Jobs) Get(uniqueid string) *JobsWrapper {
 	return nil
 }
 
-// SetUniqueID generates for every job a unique id.
-// This function should be called once on plugin start.
-// This is important for later execution.
+// SetUniqueID generates a hash of the title for every job.
+// The output should be the same as long as the plugin does not change.
 func (j *Jobs) SetUniqueID() {
-	for id := range *j {
-		(*j)[id].Job.UniqueId = uuid.Must(uuid.NewV4()).String()
+	for id, job := range *j {
+		(*j)[id].Job.UniqueId = hash(job.Job.Title)
 	}
+}
+
+// hash hashes the given string.
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }
