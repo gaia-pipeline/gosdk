@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"net"
 	"os"
 
 	"github.com/gaia-pipeline/gaia/proto"
@@ -33,10 +31,13 @@ var (
 	// ErrorExitPipeline is used to safely exit the pipeline (actually not an error).
 	// Prevents the pipeline to be marked as 'failed'.
 	ErrorExitPipeline = errors.New("pipeline exit requested by job")
+
+	// ErrorDuplicateJob is returned when two jobs have the same title which is restricted.
+	ErrorDuplicateJob = errors.New("duplicate job found (two jobs with same title)")
 )
 
 // CachedJobs holds a list of JobsWrapper for later processing
-var cachedJobs Jobs
+var cachedJobs []jobsWrapper
 
 // Args are the args passed from client.
 // They are injected before job will be started.
@@ -48,7 +49,7 @@ type GRPCServer struct{}
 // GetJobs streams all given jobs back.
 func (GRPCServer) GetJobs(empty *proto.Empty, stream proto.Plugin_GetJobsServer) error {
 	for _, job := range cachedJobs {
-		err := stream.Send(&job.Job)
+		err := stream.Send(&job.job)
 		if err != nil {
 			return err
 		}
@@ -59,16 +60,16 @@ func (GRPCServer) GetJobs(empty *proto.Empty, stream proto.Plugin_GetJobsServer)
 // ExecuteJob receives a job and executes it.
 // Returns a JobResult object which gives information about job execution.
 func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResult, error) {
-	job := cachedJobs.Get((*j).UniqueId)
+	job := getJob((*j).UniqueId)
 	if job == nil {
 		return nil, ErrorJobNotFound
 	}
 
 	// Set passed arguments
-	Args = job.Job.Args
+	Args = job.job.Args
 
 	// Execute Job
-	err := job.FuncPointer()
+	err := job.funcPointer()
 
 	// Generate result object only when we got an error
 	r := &proto.JobResult{}
@@ -85,7 +86,7 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 
 		// Set log message and job id
 		r.Message = err.Error()
-		r.UniqueId = job.Job.UniqueId
+		r.UniqueId = job.job.UniqueId
 	}
 
 	return r, err
@@ -93,17 +94,57 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 
 // Serve initiates the gRPC Server and listens...forever.
 // This method should be last called in the plugin main function.
-func Serve(j Jobs) {
+func Serve(j Jobs) error {
 	// Cache the jobs list for later processing
-	cachedJobs = j
+	// We first have to translate given jobs to different structure.
+	cachedJobs = []jobsWrapper{}
+	var priorityCounter int
+	for _, job := range j {
+		// Check for priority
+		if job.Priority == 0 {
+			priorityCounter++
+		}
 
-	// Set unique id to all jobs
-	j.SetUniqueID()
+		// Create proto jobs object
+		p := proto.Job{
+			UniqueId:    hash(job.Title),
+			Title:       job.Title,
+			Description: job.Description,
+			Priority:    job.Priority,
+			Args:        job.Args,
+		}
+
+		// Create jobs wrapper object
+		w := jobsWrapper{
+			funcPointer: job.Handler,
+			job:         p,
+		}
+		cachedJobs = append(cachedJobs, w)
+	}
+
+	// If all priorities are zero we set them auto
+	if len(j) == priorityCounter {
+		var priority int64
+		for _, job := range cachedJobs {
+			job.job.Priority = priority
+			priority++
+		}
+	}
+
+	// Check if two jobs have the same title which is restricted
+	for x, job := range cachedJobs {
+		for y, innerJob := range cachedJobs {
+			if x != y && job.job.UniqueId == innerJob.job.UniqueId {
+				return ErrorDuplicateJob
+			}
+		}
+	}
 
 	// Get unix listener
 	lis, err := serverListenerUnix()
 	if err != nil {
-		log.Fatalf("failed to listen: %s", err)
+		log.Println("cannot open unix listener")
+		return err
 	}
 
 	// implement health service
@@ -130,53 +171,8 @@ func Serve(j Jobs) {
 
 	// Listen
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
-}
-
-func serverListenerUnix() (net.Listener, error) {
-	tf, err := ioutil.TempFile("", "plugin")
-	if err != nil {
-		return nil, err
-	}
-	path := tf.Name()
-
-	// Close the file and remove it because it has to not exist for
-	// the domain socket.
-	if err := tf.Close(); err != nil {
-		return nil, err
-	}
-	if err := os.Remove(path); err != nil {
-		return nil, err
-	}
-
-	l, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap the listener in rmListener so that the Unix domain socket file
-	// is removed on close.
-	return &rmListener{
-		Listener: l,
-		Path:     path,
-	}, nil
-}
-
-// rmListener is an implementation of net.Listener that forwards most
-// calls to the listener but also removes a file as part of the close. We
-// use this to cleanup the unix domain socket on close.
-type rmListener struct {
-	net.Listener
-	Path string
-}
-
-func (l *rmListener) Close() error {
-	// Close the listener itself
-	if err := l.Listener.Close(); err != nil {
+		log.Println("cannot start grpc server")
 		return err
 	}
-
-	// Remove the file
-	return os.Remove(l.Path)
+	return nil
 }

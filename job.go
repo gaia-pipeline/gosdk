@@ -1,45 +1,38 @@
 package golang
 
 import (
-	"hash/fnv"
-
 	"github.com/gaia-pipeline/gaia/proto"
 )
 
-// Jobs new type for wrapper around proto.job
-type Jobs []JobsWrapper
+// Jobs is a collection of job
+type Jobs []Job
 
-// JobsWrapper wraps a function pointer around the
+// Job represents a single job which should be executed during pipeline run.
+// Handler is the function pointer to the function which will be executed.
+type Job struct {
+	Handler     func() error
+	Title       string
+	Description string
+	Priority    int64
+	Args        map[string]string
+}
+
+// jobsWrapper wraps a function pointer around the
 // proto.Job struct.
 // The given function corresponds to the job.
-type JobsWrapper struct {
-	FuncPointer func() error
-	Job         proto.Job
+type jobsWrapper struct {
+	funcPointer func() error
+	job         proto.Job
 }
 
 // Get looks up a job by the given id.
 // Returns the job otherwise nil.
-func (j *Jobs) Get(hash uint32) *JobsWrapper {
-	for _, job := range *j {
-		if job.Job.UniqueId == hash {
+func getJob(hash uint32) *jobsWrapper {
+	for _, job := range cachedJobs {
+		if job.job.UniqueId == hash {
 			return &job
 		}
 	}
 
 	return nil
-}
-
-// SetUniqueID generates a hash of the title for every job.
-// The output should be the same as long as the plugin does not change.
-func (j *Jobs) SetUniqueID() {
-	for id, job := range *j {
-		(*j)[id].Job.UniqueId = hash(job.Job.Title)
-	}
-}
-
-// hash hashes the given string.
-func hash(s string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(s))
-	return h.Sum32()
 }
