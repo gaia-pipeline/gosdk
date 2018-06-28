@@ -1,7 +1,7 @@
 package golang
 
 import (
-	"github.com/gaia-pipeline/gaia/proto"
+	"github.com/gaia-pipeline/protobuf"
 )
 
 // Jobs is a collection of job
