@@ -10,7 +10,7 @@ type Jobs []Job
 // Job represents a single job which should be executed during pipeline run.
 // Handler is the function pointer to the function which will be executed.
 type Job struct {
-	Handler     func() error
+	Handler     func(map[string]string) error
 	Title       string
 	Description string
 	Priority    int64
@@ -21,7 +21,7 @@ type Job struct {
 // proto.Job struct.
 // The given function corresponds to the job.
 type jobsWrapper struct {
-	funcPointer func() error
+	funcPointer func(map[string]string) error
 	job         proto.Job
 }
 

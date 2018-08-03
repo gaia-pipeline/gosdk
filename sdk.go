@@ -2,13 +2,15 @@ package golang
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log"
+	"hash/fnv"
+	"net"
 	"os"
 
 	"github.com/gaia-pipeline/protobuf"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -18,10 +20,18 @@ import (
 const coreProtocolVersion = 1
 
 // ProtocolVersion currently in use by Gaia
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // ProtocolType is the type used to communicate.
 const ProtocolType = "grpc"
+
+// List domain (usually localhost)
+const listenIP = "localhost:"
+
+// env variable key names for TLS cert path
+const serverCertEnv = "GAIA_PLUGIN_CERT"
+const serverKeyEnv = "GAIA_PLUGIN_KEY"
+const rootCACertEnv = "GAIA_PLUGIN_CA_CERT"
 
 var (
 	// ErrorJobNotFound is returned when a given job id was not found
@@ -34,14 +44,13 @@ var (
 
 	// ErrorDuplicateJob is returned when two jobs have the same title which is restricted.
 	ErrorDuplicateJob = errors.New("duplicate job found (two jobs with same title)")
+
+	// errCertNotAppended is thrown when the root CA cert cannot be appended to the pool.
+	errCertNotAppended = errors.New("cannot append root CA cert to cert pool")
 )
 
 // CachedJobs holds a list of JobsWrapper for later processing
 var cachedJobs []jobsWrapper
-
-// Args are the args passed from client.
-// They are injected before job will be started.
-var Args map[string]string
 
 // GRPCServer is the plugin gRPC implementation.
 type GRPCServer struct{}
@@ -65,11 +74,8 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 		return nil, ErrorJobNotFound
 	}
 
-	// Set passed arguments
-	Args = job.job.Args
-
 	// Execute Job
-	err := job.funcPointer()
+	err := job.funcPointer(j.GetArgs())
 
 	// Generate result object only when we got an error
 	r := &proto.JobResult{}
@@ -140,24 +146,45 @@ func Serve(j Jobs) error {
 		}
 	}
 
-	// Get unix listener
-	lis, err := serverListenerUnix()
-	if err != nil {
-		log.Println("cannot open unix listener")
-		return err
+	// Get certificates path from environment variables
+	certPath := os.Getenv(serverCertEnv)
+	keyPath := os.Getenv(serverKeyEnv)
+	caCertPath := os.Getenv(rootCACertEnv)
+
+	// Check if all certs are available
+	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to certificate")
+	}
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to key")
+	}
+	if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to root CA certificate")
 	}
 
 	// implement health service
 	health := health.NewServer()
 	health.SetServingStatus("plugin", healthpb.HealthCheckResponse_SERVING)
 
+	// Generate TLS config
+	tlsConfig, err := generateTLSConfig(certPath, keyPath, caCertPath)
+	if err != nil {
+		return errors.Wrap(err, "cannot create TLS config")
+	}
+
 	// Create new gRPC server and register services
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
 	proto.RegisterPluginServer(s, &GRPCServer{})
 	healthpb.RegisterHealthServer(s, health)
 
 	// Register reflection service on gRPC server
 	reflection.Register(s)
+
+	// Create TCP Server
+	lis, err := net.Listen("tcp", listenIP)
+	if err != nil {
+		return errors.Wrap(err, "cannot start tcp server")
+	}
 
 	// Output the address and service name to stdout.
 	// hashicorp go-plugin will use that to establish connection.
@@ -171,8 +198,14 @@ func Serve(j Jobs) error {
 
 	// Listen
 	if err := s.Serve(lis); err != nil {
-		log.Println("cannot start grpc server")
-		return err
+		return errors.Wrap(err, "cannot start grpc server")
 	}
 	return nil
+}
+
+// hash hashes the given string.
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }
