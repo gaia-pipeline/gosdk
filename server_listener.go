@@ -25,8 +25,7 @@ func generateTLSConfig(certPath, keyPath, caCertPath string) (*tls.Config, error
 	}
 
 	// Append cert to cert pool
-	ok := certPool.AppendCertsFromPEM(rootCert)
-	if !ok {
+	if ok := certPool.AppendCertsFromPEM(rootCert); !ok {
 		return nil, errCertNotAppended
 	}
 

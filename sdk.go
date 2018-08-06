@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/gaia-pipeline/protobuf"
 	"github.com/pkg/errors"
@@ -74,8 +75,19 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 		return nil, ErrorJobNotFound
 	}
 
+	// transform arguments
+	args := Arguments{}
+	for _, arg := range j.GetArgs() {
+		a := Argument{
+			Key:   arg.Key,
+			Value: arg.Value,
+		}
+
+		args = append(args, a)
+	}
+
 	// Execute Job
-	err := job.funcPointer(j.GetArgs())
+	err := job.funcPointer(args)
 
 	// Generate result object only when we got an error
 	r := &proto.JobResult{}
@@ -98,17 +110,36 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 	return r, err
 }
 
-// Serve initiates the gRPC Server and listens...forever.
+// Serve initiates the gRPC Server and listens.
 // This method should be last called in the plugin main function.
 func Serve(j Jobs) error {
-	// Cache the jobs list for later processing
+	// Cache the jobs list for later processing.
 	// We first have to translate given jobs to different structure.
 	cachedJobs = []jobsWrapper{}
-	var priorityCounter int
 	for _, job := range j {
-		// Check for priority
-		if job.Priority == 0 {
-			priorityCounter++
+		// Manual interaction
+		var ma proto.ManualInteraction
+		if job.Interaction != nil {
+			ma = proto.ManualInteraction{
+				Description: job.Interaction.Description,
+				Type:        job.Interaction.Type.String(),
+				Value:       job.Interaction.Value,
+			}
+		}
+
+		// Arguments
+		args := []*proto.Argument{}
+		if job.Args != nil {
+			for _, arg := range job.Args {
+				a := &proto.Argument{
+					Description: arg.Description,
+					Type:        arg.Type.String(),
+					Key:         arg.Key,
+					Value:       arg.Value,
+				}
+
+				args = append(args, a)
+			}
 		}
 
 		// Create proto jobs object
@@ -116,8 +147,27 @@ func Serve(j Jobs) error {
 			UniqueId:    hash(job.Title),
 			Title:       job.Title,
 			Description: job.Description,
-			Priority:    job.Priority,
-			Args:        job.Args,
+			Args:        args,
+			Interaction: &ma,
+		}
+
+		// Resolve dependencies
+		if job.DependsOn != nil {
+			p.Dependson = []uint32{}
+			for _, depJob := range job.DependsOn {
+				var foundDep bool
+				for _, currJob := range j {
+					if strings.Compare(strings.ToLower(currJob.Title), strings.ToLower(depJob)) == 0 {
+						p.Dependson = append(p.Dependson, hash(currJob.Title))
+						foundDep = true
+						break
+					}
+				}
+
+				if !foundDep {
+					return errors.Errorf("job '%s' has dependency '%s' which is not declared", job.Title, depJob)
+				}
+			}
 		}
 
 		// Create jobs wrapper object
@@ -126,15 +176,6 @@ func Serve(j Jobs) error {
 			job:         p,
 		}
 		cachedJobs = append(cachedJobs, w)
-	}
-
-	// If all priorities are zero we set them auto
-	if len(j) == priorityCounter {
-		var priority int64
-		for _, job := range cachedJobs {
-			job.job.Priority = priority
-			priority++
-		}
 	}
 
 	// Check if two jobs have the same title which is restricted
