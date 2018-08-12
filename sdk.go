@@ -2,13 +2,16 @@ package golang
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log"
+	"hash/fnv"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/gaia-pipeline/protobuf"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -18,10 +21,18 @@ import (
 const coreProtocolVersion = 1
 
 // ProtocolVersion currently in use by Gaia
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // ProtocolType is the type used to communicate.
 const ProtocolType = "grpc"
+
+// List domain (usually localhost)
+const listenIP = "localhost:"
+
+// env variable key names for TLS cert path
+const serverCertEnv = "GAIA_PLUGIN_CERT"
+const serverKeyEnv = "GAIA_PLUGIN_KEY"
+const rootCACertEnv = "GAIA_PLUGIN_CA_CERT"
 
 var (
 	// ErrorJobNotFound is returned when a given job id was not found
@@ -34,14 +45,13 @@ var (
 
 	// ErrorDuplicateJob is returned when two jobs have the same title which is restricted.
 	ErrorDuplicateJob = errors.New("duplicate job found (two jobs with same title)")
+
+	// errCertNotAppended is thrown when the root CA cert cannot be appended to the pool.
+	errCertNotAppended = errors.New("cannot append root CA cert to cert pool")
 )
 
 // CachedJobs holds a list of JobsWrapper for later processing
 var cachedJobs []jobsWrapper
-
-// Args are the args passed from client.
-// They are injected before job will be started.
-var Args map[string]string
 
 // GRPCServer is the plugin gRPC implementation.
 type GRPCServer struct{}
@@ -65,11 +75,19 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 		return nil, ErrorJobNotFound
 	}
 
-	// Set passed arguments
-	Args = job.job.Args
+	// transform arguments
+	args := Arguments{}
+	for _, arg := range j.GetArgs() {
+		a := Argument{
+			Key:   arg.Key,
+			Value: arg.Value,
+		}
+
+		args = append(args, a)
+	}
 
 	// Execute Job
-	err := job.funcPointer()
+	err := job.funcPointer(args)
 
 	// Generate result object only when we got an error
 	r := &proto.JobResult{}
@@ -92,17 +110,36 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 	return r, err
 }
 
-// Serve initiates the gRPC Server and listens...forever.
+// Serve initiates the gRPC Server and listens.
 // This method should be last called in the plugin main function.
 func Serve(j Jobs) error {
-	// Cache the jobs list for later processing
+	// Cache the jobs list for later processing.
 	// We first have to translate given jobs to different structure.
 	cachedJobs = []jobsWrapper{}
-	var priorityCounter int
 	for _, job := range j {
-		// Check for priority
-		if job.Priority == 0 {
-			priorityCounter++
+		// Manual interaction
+		var ma proto.ManualInteraction
+		if job.Interaction != nil {
+			ma = proto.ManualInteraction{
+				Description: job.Interaction.Description,
+				Type:        job.Interaction.Type.String(),
+				Value:       job.Interaction.Value,
+			}
+		}
+
+		// Arguments
+		args := []*proto.Argument{}
+		if job.Args != nil {
+			for _, arg := range job.Args {
+				a := &proto.Argument{
+					Description: arg.Description,
+					Type:        arg.Type.String(),
+					Key:         arg.Key,
+					Value:       arg.Value,
+				}
+
+				args = append(args, a)
+			}
 		}
 
 		// Create proto jobs object
@@ -110,8 +147,27 @@ func Serve(j Jobs) error {
 			UniqueId:    hash(job.Title),
 			Title:       job.Title,
 			Description: job.Description,
-			Priority:    job.Priority,
-			Args:        job.Args,
+			Args:        args,
+			Interaction: &ma,
+		}
+
+		// Resolve dependencies
+		if job.DependsOn != nil {
+			p.Dependson = []uint32{}
+			for _, depJob := range job.DependsOn {
+				var foundDep bool
+				for _, currJob := range j {
+					if strings.Compare(strings.ToLower(currJob.Title), strings.ToLower(depJob)) == 0 {
+						p.Dependson = append(p.Dependson, hash(currJob.Title))
+						foundDep = true
+						break
+					}
+				}
+
+				if !foundDep {
+					return errors.Errorf("job '%s' has dependency '%s' which is not declared", job.Title, depJob)
+				}
+			}
 		}
 
 		// Create jobs wrapper object
@@ -120,15 +176,6 @@ func Serve(j Jobs) error {
 			job:         p,
 		}
 		cachedJobs = append(cachedJobs, w)
-	}
-
-	// If all priorities are zero we set them auto
-	if len(j) == priorityCounter {
-		var priority int64
-		for _, job := range cachedJobs {
-			job.job.Priority = priority
-			priority++
-		}
 	}
 
 	// Check if two jobs have the same title which is restricted
@@ -140,24 +187,45 @@ func Serve(j Jobs) error {
 		}
 	}
 
-	// Get unix listener
-	lis, err := serverListenerUnix()
-	if err != nil {
-		log.Println("cannot open unix listener")
-		return err
+	// Get certificates path from environment variables
+	certPath := os.Getenv(serverCertEnv)
+	keyPath := os.Getenv(serverKeyEnv)
+	caCertPath := os.Getenv(rootCACertEnv)
+
+	// Check if all certs are available
+	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to certificate")
+	}
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to key")
+	}
+	if _, err := os.Stat(caCertPath); os.IsNotExist(err) {
+		return errors.Wrap(err, "cannot find path to root CA certificate")
 	}
 
 	// implement health service
 	health := health.NewServer()
 	health.SetServingStatus("plugin", healthpb.HealthCheckResponse_SERVING)
 
+	// Generate TLS config
+	tlsConfig, err := generateTLSConfig(certPath, keyPath, caCertPath)
+	if err != nil {
+		return errors.Wrap(err, "cannot create TLS config")
+	}
+
 	// Create new gRPC server and register services
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)))
 	proto.RegisterPluginServer(s, &GRPCServer{})
 	healthpb.RegisterHealthServer(s, health)
 
 	// Register reflection service on gRPC server
 	reflection.Register(s)
+
+	// Create TCP Server
+	lis, err := net.Listen("tcp", listenIP)
+	if err != nil {
+		return errors.Wrap(err, "cannot start tcp server")
+	}
 
 	// Output the address and service name to stdout.
 	// hashicorp go-plugin will use that to establish connection.
@@ -171,8 +239,14 @@ func Serve(j Jobs) error {
 
 	// Listen
 	if err := s.Serve(lis); err != nil {
-		log.Println("cannot start grpc server")
-		return err
+		return errors.Wrap(err, "cannot start grpc server")
 	}
 	return nil
+}
+
+// hash hashes the given string.
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
 }
