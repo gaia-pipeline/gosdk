@@ -4,8 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
-	"net"
-	"os"
 )
 
 // generateTLSConfig generates a new TLS config based on given
@@ -34,22 +32,4 @@ func generateTLSConfig(certPath, keyPath, caCertPath string) (*tls.Config, error
 		Certificates: []tls.Certificate{certificate},
 		ClientCAs:    certPool,
 	}, nil
-}
-
-// rmListener is an implementation of net.Listener that forwards most
-// calls to the listener but also removes a file as part of the close. We
-// use this to cleanup the unix domain socket on close.
-type rmListener struct {
-	net.Listener
-	Path string
-}
-
-func (l *rmListener) Close() error {
-	// Close the listener itself
-	if err := l.Listener.Close(); err != nil {
-		return err
-	}
-
-	// Remove the file
-	return os.Remove(l.Path)
 }
