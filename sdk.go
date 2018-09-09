@@ -94,20 +94,18 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 	if err != nil {
 		// Check if job wants to force exit pipeline.
 		// We will exit the pipeline but not mark as 'failed'.
-		if err == ErrorExitPipeline {
-			r.ExitPipeline = true
-		} else {
+		if err != ErrorExitPipeline {
 			// We got an error. Pipeline is now marked as 'failed'.
-			r.ExitPipeline = true
 			r.Failed = true
 		}
 
 		// Set log message and job id
+		r.ExitPipeline = true
 		r.Message = err.Error()
 		r.UniqueId = job.job.UniqueId
 	}
 
-	return r, err
+	return r, nil
 }
 
 // Serve initiates the gRPC Server and listens.
