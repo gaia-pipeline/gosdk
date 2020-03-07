@@ -1,4 +1,4 @@
-module github.com/gaia-pipeline/gosdk
+module github.com/Skarlso/gosdk
 
 go 1.13
 
