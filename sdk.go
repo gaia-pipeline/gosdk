@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gaia-pipeline/protobuf"
+	"github.com/Skarlso/protobuf"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -87,7 +87,7 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 	}
 
 	// Execute Job
-	err := job.funcPointer(args)
+	outs, err := job.funcPointer(args)
 
 	// Generate result object only when we got an error
 	r := &proto.JobResult{}
@@ -104,7 +104,14 @@ func (GRPCServer) ExecuteJob(ctx context.Context, j *proto.Job) (*proto.JobResul
 		r.Message = err.Error()
 		r.UniqueId = job.job.UniqueId
 	}
-
+	protoOut := make([]*proto.Output, 0)
+	for _, o := range outs {
+		protoOut = append(protoOut, &proto.Output{
+			Key: o.Key,
+			Value: o.Value,
+		})
+	}
+	r.Output = protoOut
 	return r, nil
 }
 

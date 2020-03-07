@@ -1,7 +1,7 @@
 package golang
 
 import (
-	"github.com/gaia-pipeline/protobuf"
+	"github.com/Skarlso/protobuf"
 )
 
 // InputType represents the available input types.
@@ -27,11 +27,12 @@ type Jobs []Job
 // Job represents a single job which should be executed during pipeline run.
 // Handler is the function pointer to the function which will be executed.
 type Job struct {
-	Handler     func(Arguments) error
+	Handler     func(Arguments) (Outputs, error)
 	Title       string
 	Description string
 	DependsOn   []string
 	Args        Arguments
+	Outs        Outputs
 	Interaction *ManualInteraction
 }
 
@@ -42,6 +43,15 @@ type Arguments []Argument
 type Argument struct {
 	Description string
 	Type        InputType
+	Key         string
+	Value       string
+}
+
+// Outputs is a collection of outputs
+type Outputs []*Output
+
+// Output represents a single output.
+type Output struct {
 	Key         string
 	Value       string
 }
@@ -59,7 +69,7 @@ type ManualInteraction struct {
 // proto.Job struct.
 // The given function corresponds to the job.
 type jobsWrapper struct {
-	funcPointer func(Arguments) error
+	funcPointer func(Arguments) (Outputs, error)
 	job         proto.Job
 }
 
