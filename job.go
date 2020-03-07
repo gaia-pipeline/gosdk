@@ -19,6 +19,9 @@ const (
 
 	// VaultInp vault automatic input
 	VaultInp InputType = "vault"
+
+	// OutputInp job output automatic input
+	OutputInp InputType = "output"
 )
 
 // Jobs is a collection of job
