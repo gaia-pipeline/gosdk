@@ -1,4 +1,4 @@
-module github.com/Skarlso/gosdk
+module github.com/Skarlso/gosdk/v2
 
 go 1.13
 
