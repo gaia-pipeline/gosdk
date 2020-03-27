@@ -1,9 +1,5 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/Skarlso/protobuf v0.0.0-20200307130307-c786b2468c2e h1:N8RjWy1dTXt85FSO9rnaQXC33s0XAQlnVSReKGGBAWs=
-github.com/Skarlso/protobuf v0.0.0-20200307130307-c786b2468c2e/go.mod h1:D/ResgH7nQRyfO3W9YadC7oTWlF9M5YSGvbrRebmLhg=
-github.com/Skarlso/protobuf v0.0.0-20200307140829-e2fe748a72a5 h1:GthyChPbR7o0AjYNtdFPCf73/NfWKAnc7riHfxrOFTg=
-github.com/Skarlso/protobuf v0.0.0-20200307140829-e2fe748a72a5/go.mod h1:D/ResgH7nQRyfO3W9YadC7oTWlF9M5YSGvbrRebmLhg=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
